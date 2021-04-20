@@ -244,7 +244,7 @@ def assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,
         Y = np.interp(t,[toolpath[i-1,0],toolpath[i,0]],[toolpath[i-1,2],toolpath[i,2]])
         for j in range (0,num):
             for k in range(0,ele_nodes.shape[0]):
-                if element_birth[k]==-1 and ele_topz[k]<=toolpath[i,3]:
+                if element_birth[k]==-1 and ele_topz[k]<=toolpath[i,3]+1e-4:
                     distance = (ele_ctrl[k,0]-X[j])**2 + (ele_ctrl[k,1]-Y[j])**2
                     if distance < radius**2:
                         element_birth[k] = t[j]
@@ -252,7 +252,7 @@ def assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,
             
 
                         
-def write_birth(output_file,toolpath_file,path_resolution,radius,nFrame=200):
+def write_birth(output_file,toolpath_file,path_resolution,radius,gif_start = 0, gif_end = -1, nFrame=200):
     nodes,elements = load_mesh_file(output_file)
     ele_nodes = nodes[elements] 
     ele_ctrl = ele_nodes.sum(axis=1)/8
@@ -262,7 +262,9 @@ def write_birth(output_file,toolpath_file,path_resolution,radius,nFrame=200):
     element_birth[ele_topz<=0] = 0
     assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,path_resolution)
     # save gif
-    time = np.linspace(0,toolpath[-1,0],nFrame)
+    if gif_end == -1:
+        gif_end = toolpath[-1,0]
+    time = np.linspace(gif_start,gif_end,nFrame)
     x = np.interp(time,toolpath[:,0],toolpath[:,1])
     y = np.interp(time,toolpath[:,0],toolpath[:,2])
     z = np.interp(time,toolpath[:,0],toolpath[:,3])
