@@ -454,7 +454,7 @@ class heat_solve_mgr():
     def update_cp_cond(self):
         domain=self.domain
         elements = domain.elements
-        temperature_nodes = heat_solver.temperature[elements]
+        temperature_nodes = self.temperature[elements]
         temperature_ip = (domain.Nip_ele[:,cp.newaxis,:]@temperature_nodes[:,cp.newaxis,:,cp.newaxis].repeat(8,axis=1))[:,:,0,0]
         
         self.density_Cp_Ip *= 0
