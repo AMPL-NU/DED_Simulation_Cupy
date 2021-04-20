@@ -1,6 +1,9 @@
 from numba import jit,vectorize,guvectorize,cuda
 import numpy as np
 import pandas as pd
+import pyvista as pv
+from pyvirtualdisplay import Display
+import vtk
 
 def write_keywords(file_name,output_file,height):
     with open(file_name,'r') as input_file:
@@ -245,9 +248,11 @@ def assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,
                     distance = (ele_ctrl[k,0]-X[j])**2 + (ele_ctrl[k,1]-Y[j])**2
                     if distance < radius**2:
                         element_birth[k] = t[j]
+                        
+            
 
                         
-def write_birth(output_file,toolpath_file,path_resolution,radius):
+def write_birth(output_file,toolpath_file,path_resolution,radius,nFrame=200):
     nodes,elements = load_mesh_file(output_file)
     ele_nodes = nodes[elements] 
     ele_ctrl = ele_nodes.sum(axis=1)/8
@@ -256,6 +261,37 @@ def write_birth(output_file,toolpath_file,path_resolution,radius):
     element_birth = -np.ones(elements.shape[0])
     element_birth[ele_topz<=0] = 0
     assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,path_resolution)
+    # save gif
+    time = np.linspace(0,toolpath[-1,0],nFrame)
+    x = np.interp(time,toolpath[:,0],toolpath[:,1])
+    y = np.interp(time,toolpath[:,0],toolpath[:,2])
+    z = np.interp(time,toolpath[:,0],toolpath[:,3])
+    toolpath_interp = np.array([time,x,y,z]).transpose()
+    
+    display = Display(visible=0)
+    _ = display.start()
+    p = pv.Plotter(window_size=(1000,800))
+    p.show(auto_close=False)
+    # Open a gif
+    p.open_gif("birth.gif")
+    for step in range(0,nFrame):
+        p.clear()
+        t = toolpath_interp[step,0]
+        laser = toolpath_interp[step,1:4]
+        active_elements = [element.tolist() for element, birth_time in zip(elements, element_birth) if (birth_time <= t)]
+        cells = np.array([item for sublist in active_elements for item in [8] + sublist])
+        cell_type = np.array([vtk.VTK_HEXAHEDRON] * len(active_elements))
+        points = np.array(nodes)
+        grid = pv.UnstructuredGrid(cells, cell_type, points)
+        p.camera_position = [(0, -100, 180),(0, 0, 0),(0.0, 0.0, 1.0)]
+        p.add_mesh(grid,show_edges=True, color='#A9DFBF',edge_color='#1B2631',lighting=True)
+        p.add_points(laser,point_size = 10,color='red')
+        p.add_axes()
+        p.write_frame()  # this will trigger the render
+
+    p.close()
+    
+    
     element_birth = np.concatenate((np.arange(0,elements.shape[0])[:,np.newaxis],element_birth[:,np.newaxis]),axis=1)
     element_birth = element_birth[element_birth[:,1].argsort()]
     f = open(output_file,'r+')
