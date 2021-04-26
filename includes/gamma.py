@@ -578,6 +578,6 @@ class heat_solve_mgr():
             temperature_ele_bot = temperature_ele_nodes[:,0:4].max(axis=1)
             z_top = ele_nodes_pos[:,4,2]
             z_bot = ele_nodes_pos[:,0,2]
-            melt_z =  z_bot + (z_top - z_bot) * (solidus - temperature_ele_bot) / (temperature_ele_top - temperature_ele_bot);
+            melt_botz =  z_bot + (z_top - z_bot) * (solidus - temperature_ele_bot) / (temperature_ele_top - temperature_ele_bot);
 
-            self.melt_depth = self.laser_loc[2] - melt_z.min()
+            self.melt_depth = z_top.max() - melt_botz.min()
