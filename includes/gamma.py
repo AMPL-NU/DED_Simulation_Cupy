@@ -563,9 +563,13 @@ class heat_solve_mgr():
 
         temperature_ele_max = temperature_ele_nodes.max(axis = 1)
         solidus = 1533.15
+        self.melt_depth = 0
         elements = elements[temperature_ele_nodes[:,4:8].max(axis=1)>=solidus]
         temperature_ele_nodes = self.temperature[elements]
-        melt_topz = ele_nodes_pos[:,4,2].max()
+        if elements.shape[0]>0:
+            ele_nodes_pos = domain.nodes[elements]
+            melt_topz = ele_nodes_pos[:,4,2].max()
+
         elements = elements[temperature_ele_nodes[:,0:4].max(axis=1)<=solidus]
         temperature_ele_nodes = self.temperature[elements]
         
