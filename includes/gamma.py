@@ -565,6 +565,7 @@ class heat_solve_mgr():
         solidus = 1533.15
         elements = elements[temperature_ele_nodes[:,4:8].max(axis=1)>=solidus]
         temperature_ele_nodes = self.temperature[elements]
+        melt_topz = ele_nodes_pos[:,4,2].max()
         elements = elements[temperature_ele_nodes[:,0:4].max(axis=1)<=solidus]
         temperature_ele_nodes = self.temperature[elements]
         
@@ -580,4 +581,4 @@ class heat_solve_mgr():
             z_bot = ele_nodes_pos[:,0,2]
             melt_botz =  z_bot + (z_top - z_bot) * (solidus - temperature_ele_bot) / (temperature_ele_top - temperature_ele_bot);
 
-            self.melt_depth = z_top.max() - melt_botz.min()
+            self.melt_depth = melt_topz - melt_botz.min()
