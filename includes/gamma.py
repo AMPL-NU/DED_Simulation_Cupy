@@ -168,12 +168,11 @@ def creat_surfaces(elements,element_birth,nodes):
     creatElElConn(elements,connect_surf)
     surfaces = np.zeros([elements.shape[0]*6,4],dtype=np.int32)
     surface_birth = np.zeros([elements.shape[0]*6,2])
-    surface_node_coords = np.zeros([elements.shape[0]*6,4,2])
     surface_xy = np.zeros([elements.shape[0]*6,1],dtype=np.int32)
     
     surface_num = 0
     index = np.array([[4,5,6,7],[0,1,2,3],[0,1,5,4],[3,2,6,7],[0,3,7,4],[1,2,6,5]])
-    coord_ind = np.array([[0,1],[0,1],[0,2],[0,2],[1,2],[1,2]])
+  #  coord_ind = np.array([[0,1],[0,1],[0,2],[0,2],[1,2],[1,2]])
     norm_ind = np.array([1,1,0,0,0,0])
     for i in range (0,elements.shape[0]):
         element = elements[i]
@@ -187,21 +186,24 @@ def creat_surfaces(elements,element_birth,nodes):
                 surfaces[surface_num] = element[index[j]]
                 surface_birth[surface_num,0] = birth_current
                 surface_birth[surface_num,1] = birth_neighbor
-                surface_node_coords[surface_num,:,:] = nodes[element[index[j]]][:,coord_ind[j]]
-                surface_xy[surface_num] = norm_ind[j]
+
+                #surface_xy[surface_num] = norm_ind[j]
+                if abs(nodes[element[index[j]]][0,2]-nodes[element[index[j]]][1,2])<1e-2 and abs(nodes[element[index[j]]][1,2]-nodes[element[index[j]]][2,2])<1e-2:
+                    surface_xy[surface_num] = 1
+           
                 surface_num += 1
 
     surfaces = surfaces[0:surface_num]
     surface_birth = surface_birth[0:surface_num]
     surface_xy = surface_xy[0:surface_num]
-    surface_node_coords = surface_node_coords[0:surface_num]
+
     
     surface_flux = np.zeros([surface_num,1],dtype=np.int32)
     for i in range(0,surface_num):
-        if min(nodes[surfaces[i,:]][:,2])>=0:
+        if min(nodes[surfaces[i,:]][:,2])>-20:
             surface_flux[i] = 1
     
-    return surfaces, surface_birth, surface_xy, surface_node_coords, surface_flux
+    return surfaces, surface_birth, surface_xy, surface_flux
 
 
 
@@ -311,18 +313,21 @@ class domain_mgr():
         self.elements = cp.asarray(elements)
         self.nE = self.elements.shape[0]
         self.element_birth = cp.asarray(element_birth)
+        ind = (self.nodes[self.elements,2]).argsort()
+        elements_order = [self.elements[i,ind[i]] for i in range(0,ind.shape[0])]
+        self.elements_order = cp.array(elements_order)
         
         # assign element materials
         ##### modifications needed, from input file
         self.element_mat = cp.ones(self.nE)
         self.element_mat += self.nodes[self.elements][:,:,2].max(axis=1)<=0 # node maxZ<=0 -> substrate material
         self.mat_num = 2
-        self.ele_min_Cp_Rho_overCond = [0.368*0.0081/0.01,0.5*0.008/0.0214]
+        self.ele_min_Cp_Rho_overCond = [0.368*0.0081/0.0286,0.5*0.008/0.0214]
         self.density = [0.0081,0.008]
         
         # calculating critical timestep
         #### modification needed, from input file
-        self.defaultFac = 0.95
+        self.defaultFac = 0.75
         start = time.time()
         self.get_timestep()
         end = time.time()
@@ -332,7 +337,7 @@ class domain_mgr():
         # reading and interpolating toolpath
         start = time.time()
         toolpath_raw = load_toolpath(filename = self.toolpath_file)
-        endtime = 2000;
+        endtime = toolpath_raw[-1,0];
         toolpath = get_toolpath(toolpath_raw,self.dt,endtime)
         end = time.time()
         print("Time of reading and interpolating toolpath: {}".format(end-start))
@@ -345,10 +350,9 @@ class domain_mgr():
                 
         # generating surface
         start = time.time()
-        surface, surface_birth,surface_xy,surface_node_coords,surface_flux = creat_surfaces(elements,element_birth,nodes)
+        surface, surface_birth,surface_xy,surface_flux = creat_surfaces(elements,element_birth,nodes)
         end = time.time()
         print("Time of generating surface: {}".format(end-start))
-        self.surface_node_coords = cp.asarray(surface_node_coords)
         self.surface = cp.asarray(surface)
         self.surface_birth = cp.asarray(surface_birth)
         self.surface_xy = cp.asarray(surface_xy)
@@ -437,7 +441,7 @@ class heat_solve_mgr():
         ##### modification needed, from files
         self.domain = domain
         self.ambient = 300
-        self.r_beam = 1.5
+        self.r_beam = 1
         self.q_in = 250
         self.h_conv = 0.00005
         self.h_rad = 0.2
@@ -510,7 +514,6 @@ class heat_solve_mgr():
         nodes = self.domain.nodes
         Nip_sur = self.domain.Nip_sur
         Bip_sur = self.domain.Bip_sur
-        surface_node_coords = self.domain.surface_node_coords[self.domain.active_surface]
         surface_xy  = self.domain.surface_xy[self.domain.active_surface]
         surface_flux = self.domain.surface_flux[self.domain.active_surface]
 
@@ -558,12 +561,11 @@ class heat_solve_mgr():
     
     def calculate_melt(self):
         domain = self.domain
-        elements = domain.elements[domain.active_elements]
+        elements = domain.elements_order[domain.active_elements]
         temperature_ele_nodes = self.temperature[elements]
 
         temperature_ele_max = temperature_ele_nodes.max(axis = 1)
         solidus = 1533.15
-        self.melt_depth = 0
         elements = elements[temperature_ele_nodes[:,4:8].max(axis=1)>=solidus]
         temperature_ele_nodes = self.temperature[elements]
         if elements.shape[0]>0:
