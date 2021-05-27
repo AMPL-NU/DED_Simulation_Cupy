@@ -108,8 +108,24 @@ def load_inputfile(filename):
             if (birth_list_node[node] > birth_element or 
                                         birth_list_node[node] < 0):
                                     birth_list_node[node] = birth_element
-        
-    return np.array(nodes), np.array(birth_list_node), np.array(elements), np.array(birth_list_element)
+                    
+                    
+    nodes = np.array(nodes)
+    node_birth = np.array(birth_list_node)
+    elements = np.array(elements)
+    element_birth = np.array(birth_list_element)
+    
+    n_id_sort = np.argsort(node_birth)
+    nodes = nodes[n_id_sort]
+    node_birth = node_birth[n_id_sort]
+    iDarray = np.arange(0,nodes.shape[0])
+    for i in range(0,elements.shape[0]):
+        for j in range(0,8):
+            elements[i,j] = iDarray[n_id_sort == elements[i,j]]
+    e_id_sort = np.argsort(element_birth)
+    elements = elements[e_id_sort]
+    element_birth = element_birth[e_id_sort]
+    return nodes, node_birth, elements, element_birth 
 
 
 
@@ -467,7 +483,7 @@ class heat_solve_mgr():
         solidus1 = 1533.15
         liquidus1 = 1609.15
         latent1 = 272/(liquidus1-solidus1)
-        mat1 = domain.element_mat ==1
+        mat1 = domain.element_mat == 1
         thetaIp = temperature_ip[domain.active_elements*mat1]
         self.density_Cp_Ip[domain.active_elements*mat1] += domain.density[0]*latent1 * (thetaIp>solidus1)*(thetaIp<liquidus1)
         thetaIp = cp.clip(thetaIp,self.ambient,solidus1)
@@ -557,7 +573,9 @@ class heat_solve_mgr():
         self.update_fluxes()
 
         self.temperature[domain.active_nodes] += domain.dt*self.rhs[domain.active_nodes]/self.m_vec[domain.active_nodes]
+        # modification required
         self.temperature[cp.where(domain.nodes[:,2]==-20)]=300
+        
     
     def calculate_melt(self):
         domain = self.domain
