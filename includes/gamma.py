@@ -461,6 +461,7 @@ class heat_solve_mgr():
         self.q_in = 250
         self.h_conv = 0.00005
         self.h_rad = 0.2
+        self.height = 20
         
         # initialization
         self.temperature = self.ambient*cp.ones(self.domain.nodes.shape[0])
@@ -574,7 +575,7 @@ class heat_solve_mgr():
 
         self.temperature[domain.active_nodes] += domain.dt*self.rhs[domain.active_nodes]/self.m_vec[domain.active_nodes]
         # modification required
-        self.temperature[cp.where(domain.nodes[:,2]==-20)]=300
+        self.temperature[cp.where(domain.nodes[:,2]==-self.height)]=300
         
     
     def calculate_melt(self):
