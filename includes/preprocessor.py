@@ -233,26 +233,36 @@ def load_toolpath(filename):
 
 
 @jit(nopython=True)
-def assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,path_resolution):
+def assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,path_resolution,mode):
     for i in range(1,toolpath.shape[0]):
         if toolpath[i,4] == 0:
             continue
-        d = np.linalg.norm(toolpath[i,1:4]-toolpath[i-1,1:4])
+        direction = toolpath[i,1:4]-toolpath[i-1,1:4]
+        d = np.linalg.norm(direction)
+        dir_norm = direction/d
         num = round(d/path_resolution)
         t = np.linspace(toolpath[i-1,0],toolpath[i,0],num+1)
         X = np.interp(t,[toolpath[i-1,0],toolpath[i,0]],[toolpath[i-1,1],toolpath[i,1]])
         Y = np.interp(t,[toolpath[i-1,0],toolpath[i,0]],[toolpath[i-1,2],toolpath[i,2]])
-        for j in range (0,num):
-            for k in range(0,ele_nodes.shape[0]):
-                if element_birth[k]==-1 and ele_topz[k]<=toolpath[i,3]+1e-4:
-                    distance = (ele_ctrl[k,0]-X[j])**2 + (ele_ctrl[k,1]-Y[j])**2
-                    if distance < radius**2:
-                        element_birth[k] = t[j]
-                        
+        if mode == 0:
+            for j in range (0,num):
+                for k in range(0,ele_nodes.shape[0]):
+                    if element_birth[k]==-1 and ele_topz[k]<=toolpath[i,3]+1e-4:
+                        distance = (ele_ctrl[k,0]-X[j])**2 + (ele_ctrl[k,1]-Y[j])**2
+                        if distance < radius**2:
+                            element_birth[k] = t[j]
+        if mode == 1:
+            for j in range (0,num):
+                for k in range(0,ele_nodes.shape[0]):
+                    if element_birth[k]==-1 and ele_topz[k]<=toolpath[i,3]+1e-4:
+                        distance = (ele_ctrl[k,0]-X[j])*dir_norm[0] + (ele_ctrl[k,1]-Y[j])*dir_norm[1]
+                        if distance < radius**2:
+                            element_birth[k] = t[j]
             
 
                         
-def write_birth(output_file,toolpath_file,path_resolution,radius,gif_start = 0, gif_end = -1, nFrame=200):
+def write_birth(output_file,toolpath_file,path_resolution,radius,
+                gif_start=0,gif_end=-1,nFrame=200,mode=0,camera_position=[(0, -100, 180),(0, 0, 0),(0.0, 0.0, 1.0)]):
     nodes,elements = load_mesh_file(output_file)
     ele_nodes = nodes[elements] 
     ele_ctrl = ele_nodes.sum(axis=1)/8
@@ -260,7 +270,7 @@ def write_birth(output_file,toolpath_file,path_resolution,radius,gif_start = 0, 
     toolpath = load_toolpath(toolpath_file)
     element_birth = -np.ones(elements.shape[0])
     element_birth[ele_topz<=0] = 0
-    assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,path_resolution)
+    assign_birth_time(ele_nodes,ele_ctrl,ele_topz,toolpath,element_birth,radius,path_resolution,mode)
     # save gif
     if gif_end == -1:
         gif_end = toolpath[-1,0]
@@ -285,7 +295,7 @@ def write_birth(output_file,toolpath_file,path_resolution,radius,gif_start = 0, 
         cell_type = np.array([vtk.VTK_HEXAHEDRON] * len(active_elements))
         points = np.array(nodes)
         grid = pv.UnstructuredGrid(cells, cell_type, points)
-        p.camera_position = [(0, -100, 180),(0, 0, 0),(0.0, 0.0, 1.0)]
+        p.camera_position = camera_position
         p.add_mesh(grid,show_edges=True, color='#A9DFBF',edge_color='#1B2631',lighting=True)
         p.add_points(laser,point_size = 10,color='red')
         p.add_axes()
@@ -322,9 +332,9 @@ Rambient       300.0
 *PARAMETER
 Rabszero         0.0
 *TOOL_FILE
-toolpath.crs
+file_name
 *GAUSS_LASER
-500.0 1.5 0.5
+laser_power radius effieciency
 *SCALAR_OUT
 temp
 solid_rate
@@ -332,7 +342,7 @@ theta_hist
 nid_true
 *CONTROL_TERMINATION
 $$  ENDTIM    ENDCYC     DTMIN    ENDENG    ENDMAS
-   678.830
+   time
 *CONTROL_TIMESTEP
 $$  DTINIT    TSSFAC      ISDO    TSLIMT     DT2MS      LCTM     EROD       E     MSIST
     1.0E-2       1.0
@@ -344,12 +354,12 @@ $$      DT    BINARY      LCUR      IOPT      DTHF     BINHF
     10.000         0
 *MAT_THERMAL_ISOTROPIC
 $HMNAME MATS       1MATT1_1
-         1   0.00800   1648.15   1673.15     272.5
-    0.5000    0.0214
+         1   density   solidus   liqudius   latent_heat
+    cp    cond
 *MAT_THERMAL_ISOTROPIC
 $HMNAME MATS       2MATT1_2
-         2   0.00800   1648.15   1673.15     272.5
-    0.5000    0.0214
+         2   density   solidus   liqudius   latent_heat
+    cp    cond
 *PART
 $HWCOLOR COMPS       1       3
 Substrate
