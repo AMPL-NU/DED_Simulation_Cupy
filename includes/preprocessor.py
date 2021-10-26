@@ -283,7 +283,7 @@ def write_birth(output_file,toolpath_file,path_resolution,radius,
     display = Display(visible=0)
     _ = display.start()
     p = pv.Plotter(window_size=(1000,800))
-    p.show(auto_close=False)
+    #p.show(auto_close=False)
     # Open a gif
     p.open_gif("birth.gif")
     for step in range(0,nFrame):
