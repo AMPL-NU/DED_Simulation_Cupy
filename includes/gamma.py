@@ -1,147 +1,74 @@
-from numba import jit,vectorize,guvectorize,cuda
+from numba import jit
 import cupy as cp
 from cupyx import scatter_add
 import pandas as pd
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+from pyvirtualdisplay import Display
+import vtk
+import pyvista as pv
 
-def load_inputfile(filename):
-    nodes = []
-    node_sets = {}
-    elements = []
-    birth_list_element = []
-    birth_list_node = []
-
-    with open(filename) as f:
-        while True:
-            line = next(f)
-            if not line.split():
-                continue
-            if line.split()[0] == '*NODE':
-                first = True
-                while True:
-                    line = next(f)
-                    if line[0] == '*':
-                        break
-                    if line[0] == '$':
-                        continue
-                    text = line.split()
-                    if first:
-                        node_base = int(text[0])
-                        first = False
-                    nodes.append([float(text[1]),float(text[2]),float(text[3])])
-            if line.split()[0] == '*END':
-                break
-    birth_list_node = [-1 for _ in range(len(nodes))]
-    
-    
-    with open(filename) as f:
-        line = next(f)
-        while True:
-            if not line.split():
-                line = next(f)
-                continue
-            elif line.split()[0] == '*SET_NODE_LIST':
-                line = next(f)
-                line = next(f)
-                key = int(line.split()[0])
-                node_list = []
-                while True:
-                    line = next(f)
-                    if line[0] == '*':
-                        break
-                    if line[0] == '$':
-                        continue
-                    for text in line.split():
-                        node_list.append(int(text)-node_base)
-                node_sets[key] = node_list
-            elif line.split()[0] == '*END':
-                break
-            else:
-                line = next(f)
-                
-                
-    with open(filename) as f:
-        while True:
-            line = next(f)
-            if not line.split():
-                continue
-            if line.split()[0] == '*ELEMENT_SOLID':
-                first = True
-                while True:
-                    line = next(f)
-                    if line[0] == '*':
-                        break
-                    if line[0] == '$':
-                        continue
-                    text = line.split()
-                    if first:
-                        element_base = int(text[0])
-                        first = False
-                    elements.append([int(text[2])-node_base, int(text[3])-node_base, int(text[4])-node_base, int(text[5])-node_base,
-                                     int(text[6])-node_base, int(text[7])-node_base, int(text[8])-node_base, int(text[9])-node_base])
-            if line.split()[0] == '*END':
-                break
-
-    birth_list_element = [0.0]*len(elements)
-    with open(filename) as f:
-        while True:
-            line = next(f)
-            if not line.split():
-                continue
-            if line.split()[0] == '*DEFINE_CURVE':
-                while True:
-                    line = next(f)
-                    if line[0] == '*':
-                        break
-                    if line[0] == '$':
-                        continue
-                    text = line.split()
-                    birth_list_element[int(float(text[1]))-element_base] = float(text[0])
-            if line.split()[0] == '*END':
-                break
-    for element, birth_element in zip(elements, birth_list_element):
-        if birth_element < 0:
+@jit('void(int64[:,:], float64[:],float64[:])',nopython=True)
+def asign_birth_node(elements,element_birth,node_birth):
+    for i in range(0,elements.shape[0]):
+        element = elements[i]
+        birth = element_birth[i]
+        if birth < 0:
             continue
-        for node in element:
-            if (birth_list_node[node] > birth_element or 
-                                        birth_list_node[node] < 0):
-                                    birth_list_node[node] = birth_element
-                    
-                    
-    nodes = np.array(nodes)
-    node_birth = np.array(birth_list_node)
-    elements = np.array(elements)
-    element_birth = np.array(birth_list_element)
-    
+        for j in range(0,8):
+            node = element[j]
+            if (node_birth[node] > birth or node_birth[node] < 0):
+                node_birth[node] = birth
+
+@jit('void(float64[:,:],int64[:,:],float64[:],float64[:],int64[:])',nopython=True)
+def renum_ele_node(nodes,elements,node_birth,element_birth,element_mat):
     n_id_sort = np.argsort(node_birth)
+    n_id_map = np.zeros_like(n_id_sort)
     nodes = nodes[n_id_sort]
     node_birth = node_birth[n_id_sort]
-    iDarray = np.arange(0,nodes.shape[0])
+    for i in range(0,n_id_sort.shape[0]):
+        n_id_map[n_id_sort[i]] = i
     for i in range(0,elements.shape[0]):
         for j in range(0,8):
-            elements[i,j] = iDarray[n_id_sort == elements[i,j]]
+            elements[i,j] = n_id_map[elements[i,j]]
     e_id_sort = np.argsort(element_birth)
     elements = elements[e_id_sort]
+    element_mat = element_mat[e_id_sort]
     element_birth = element_birth[e_id_sort]
-    return nodes, node_birth, elements, element_birth 
 
 
+@jit('void(int64[:,:], int64[:,:],int64[:],int64[:],int64[:])',nopython=True,)
+def createElElConn(elements,connElEl,connVec,connVecIndx,conn_to_el_Vec):
+    ele_num = elements.shape[0]
+    for i in range(0,ele_num):
+        element = elements[i]
+        for j in range(0,8):
+            node = element[j]
+            lower_bound = np.searchsorted(connVec,node)
+            higher_bound = np.searchsorted(connVec,node,side='right')
+            for k in range(lower_bound,higher_bound):
+                nodeEleK = connVecIndx[k]
+                if i != conn_to_el_Vec[nodeEleK]:
+                    for l in range(0,100):
+                        if connElEl[i,l] == conn_to_el_Vec[nodeEleK]:
+                            break
+                        if connElEl[i,l] == -1:
+                            connElEl[i,l] = conn_to_el_Vec[nodeEleK]
+                            break
 
-
-@jit(nopython=True)
-def creatElElConn(elements,connect_surf):
+@jit('void(int64[:,:], int64[:,:],int64[:,:])',nopython=True,)
+def createConnSurf(elements,connElEl,connect_surf):
     for i in range (0,elements.shape[0]):
         element = elements[i]
-        node = element[0]
-        neighbor = np.where(elements==node) 
-        for j in neighbor[0]:
+        for j in connElEl[i,:]:
+            if j == -1:
+                break
+            if (j == i):
+                continue
+            s_element = elements[j]
             ind = np.zeros(4)
             num = 0
-            s_element = elements[j]
-            if (i == j):
-                continue
             for k in range(0,8):
                 for l in range(0,8):
                     if element[k] == s_element[l]:
@@ -155,14 +82,15 @@ def creatElElConn(elements,connect_surf):
             if ind[0] == 0 and ind[1] == 3 and ind[2] == 4 and ind[3] == 7:
                 connect_surf[i][4] = j
 
-        node = element[6]
-        neighbor = np.where(elements==node) 
-        for j in neighbor[0]:
+                
+        for j in connElEl[i,:]:
+            if j == -1:
+                break
+            if (j == i):
+                continue
+            s_element = elements[j]
             ind = np.zeros(4)
             num = 0
-            s_element = elements[j]
-            if (i == j):
-                continue
             for k in range(0,8):
                 for l in range(0,8):
                     if element[k] == s_element[l]:
@@ -176,20 +104,10 @@ def creatElElConn(elements,connect_surf):
             if ind[0] == 1 and ind[1] == 2 and ind[2] == 5 and ind[3] == 6:
                 connect_surf[i][5] = j
                 
-                
-                
-                
-def creat_surfaces(elements,element_birth,nodes):
-    connect_surf = -np.ones([elements.shape[0],6],dtype=np.int32)
-    creatElElConn(elements,connect_surf)
-    surfaces = np.zeros([elements.shape[0]*6,4],dtype=np.int32)
-    surface_birth = np.zeros([elements.shape[0]*6,2])
-    surface_xy = np.zeros([elements.shape[0]*6,1],dtype=np.int32)
-    
+@jit(nopython=True)
+def createSurf(elements,nodes,element_birth,connect_surf,surfaces,surface_birth,surface_xy,surface_flux):
     surface_num = 0
     index = np.array([[4,5,6,7],[0,1,2,3],[0,1,5,4],[3,2,6,7],[0,3,7,4],[1,2,6,5]])
-  #  coord_ind = np.array([[0,1],[0,1],[0,2],[0,2],[1,2],[1,2]])
-    norm_ind = np.array([1,1,0,0,0,0])
     for i in range (0,elements.shape[0]):
         element = elements[i]
         birth_current = element_birth[i]
@@ -202,25 +120,21 @@ def creat_surfaces(elements,element_birth,nodes):
                 surfaces[surface_num] = element[index[j]]
                 surface_birth[surface_num,0] = birth_current
                 surface_birth[surface_num,1] = birth_neighbor
-
-                #surface_xy[surface_num] = norm_ind[j]
                 if abs(nodes[element[index[j]]][0,2]-nodes[element[index[j]]][1,2])<1e-2 and abs(nodes[element[index[j]]][1,2]-nodes[element[index[j]]][2,2])<1e-2:
                     surface_xy[surface_num] = 1
-           
                 surface_num += 1
 
     surfaces = surfaces[0:surface_num]
     surface_birth = surface_birth[0:surface_num]
     surface_xy = surface_xy[0:surface_num]
-
     
-    surface_flux = np.zeros([surface_num,1],dtype=np.int32)
+    ########################################
+    height = -nodes[:,2].min()
     for i in range(0,surface_num):
-        if min(nodes[surfaces[i,:]][:,2])>-20:
+        if min(nodes[surfaces[i,:]][:,2])>-height:
             surface_flux[i] = 1
     
-    return surfaces, surface_birth, surface_xy, surface_flux
-
+    return surface_num
 
 
 
@@ -298,11 +212,8 @@ def derivate_shape_fnc_surface(parCoord):
 
 
 class domain_mgr():
-    def __init__(self,filename,toolpath_file):
+    def __init__(self,filename):
         self.filename = filename
-        self.toolpath_file = toolpath_file
-        
-        
         parCoords_element = np.array([[-1.0,-1.0,-1.0],[1.0,-1.0,-1.0],[1.0, 1.0,-1.0],[-1.0, 1.0,-1.0],
                                       [-1.0,-1.0,1.0],[1.0,-1.0, 1.0], [ 1.0,1.0,1.0],[-1.0, 1.0,1.0]]) * 0.5773502692
         parCoords_surface = np.array([[-1.0,-1.0],[-1.0, 1.0],[1.0,-1.0],[1.0,1.0]])* 0.5773502692
@@ -317,62 +228,280 @@ class domain_mgr():
         self.get_ele_J()
         self.get_surf_ip_pos_and_J()
         
+    def load_file(self):
+        nodes = []
+        node_sets = {}
+        elements = []
+        element_mat = []
+        mat_thermal = []
+        thermal_TD = {}
+        birth_list_element = []
+        birth_list_node = []
+        filename = self.filename
+        with open(filename) as f:
+            line = next(f)
+            while True: 
+                if not line.split():
+                    line = next(f)
+                    continue
+
+                # option *Node
+                elif line.split()[0] == '*NODE':
+                    first = True
+                    while True:
+                        line = next(f)
+                        if line[0] == '*':
+                            break
+                        if line[0] == '$':
+                            continue
+                        text = line.split()
+                        if first:
+                            node_base = int(text[0])
+                            first = False
+                        nodes.append([float(text[1]),float(text[2]),float(text[3])])
+
+        #         # option *SET_NODE_LIST
+                elif  line.split()[0] == '*SET_NODE_LIST':
+                    line = next(f)
+                    line = next(f)
+                    key = int(line.split()[0])
+                    node_list = []
+                    while True:
+                        line = next(f)
+                        if line[0] == '*':
+                            break
+                        if line[0] == '$':
+                            continue
+                        for text in line.split():
+                            node_list.append(int(text)-node_base)
+                    node_sets[key] = node_list
+
+                # option **ELEMENT_SOLID
+                elif line.split()[0] == '*ELEMENT_SOLID':
+                    first = True
+                    while True:
+                        line = next(f)
+                        if line[0] == '*':
+                            break
+                        if line[0] == '$':
+                            continue
+                        text = line.split()
+                        if first:
+                            element_base = int(text[0])
+                            first = False
+
+                        elements.append([int(text[2])-node_base, int(text[3])-node_base, int(text[4])-node_base, int(text[5])-node_base,
+                                         int(text[6])-node_base, int(text[7])-node_base, int(text[8])-node_base, int(text[9])-node_base])
+                        element_mat.append(int(text[1]))       
+
+                elif line.split()[0] == '*END':
+                    birth_list_node = [-1 for _ in range(len(nodes))]
+                    birth_list_element = [0.0]*len(elements)
+                    break
+
+                elif line.split()[0] == '*TOOL_FILE':
+                    line = next(f)
+                    self.toolpath_file = line.split()[0]
+                    line = next(f)
+
+                elif line.split()[0] == '*PARAMETER':
+                    line = next(f)
+                    if line.split()[0] == 'Rboltz':
+                        boltz = float(line.split()[1])
+                    if line.split()[0] == 'Rambient':
+                        self.ambient = float(line.split()[1])
+                    if line.split()[0] == 'Rabszero':
+                        abszero = float(line.split()[1])
+                    line = next(f)
+
+                elif line.split()[0] == '*GAUSS_LASER':
+                    line = next(f)
+                    text = line.split()
+                    self.q_in = float(text[0])*float(text[2])
+                    self.r_beam = float(text[1])
+
+                elif line.split()[0] == '*CONTROL_TIMESTEP':
+                    line = next(f)
+                    line = next(f)
+                    self.dt = float(line.split()[0])
+
+                elif line.split()[0] == '*CONTROL_TERMINATION':
+                    line = next(f)
+                    line = next(f)
+                    self.end_time = float(line.split()[0])
+
+                elif line.split()[0] == '*DATABASE_NODOUT':
+                    line = next(f)
+                    line = next(f)
+                    output_step = float(line.split()[0])
+                
+                elif line.split()[0] == '*LOAD_NODE_SET':
+                    while True:
+                        line = next(f)
+                        if line[0] == '*':
+                            break
+                        if line.split()[1] == 'Radiation' or line.split()[1] == 'radiation':
+                            line = next(f)
+                            self.h_rad = float(line.split()[2])
+                        if line.split()[1] == 'convection' or line.split()[1] == 'Convection' :
+                            line = next(f)
+                            self.h_conv = float(line.split()[2])
+
+                elif line.split()[0] == '*MAT_THERMAL_ISOTROPIC':
+                    line = next(f)
+                    line = next(f)
+                    text1 = line.split()
+                    line = next(f)
+                    text2 = line.split()
+                    mat_thermal.append([int(text1[0]), # mat ID
+                                        float(text1[1]), # density
+                                        float(text1[2]), # solidus
+                                        float(text1[3]), # liquidus
+                                        float(text1[4]), # latent heat
+                                        float(text2[0]), # heat capacity
+                                        float(text2[1]),]) # thermal conductivity
+
+                elif line.split()[0] == '*MAT_THERMAL_ISOTROPIC_TD':
+                    line = next(f)
+                    line = next(f)
+                    text1 = line.split()
+                    mat_thermal.append([int(text1[0]), # mat ID
+                                        float(text1[1]), # density
+                                        float(text1[2]), # solidus
+                                        float(text1[3]), # liquidus
+                                        float(text1[4]), # latent heat
+                                        -1, # heat capacity, TD
+                                        -1,]) # thermal conductivity, TD '
+                    line = next(f)
+                    Cp = np.loadtxt(line.split()[0])
+                    line = next(f)
+                    cond = np.loadtxt(line.split()[0])
+                    thermal_TD[int(text1[0])] = [Cp,cond]
+
+
+                else:
+                    line = next(f)
+
+        with open(filename) as f:
+                while True:
+                    line = next(f)
+                    if not line.split():
+                        continue
+                    if line.split()[0] == '*DEFINE_CURVE':
+                        while True:
+                            line = next(f)
+                            if line[0] == '*':
+                                break
+                            if line[0] == '$':
+                                continue
+                            text = line.split()
+                            birth_list_element[int(float(text[1]))-element_base] = float(text[0])
+                    if line.split()[0] == '*END':
+                        break
+
+        nodes = np.array(nodes)
+        elements = np.array(elements)
+        element_mat = np.array(element_mat)
+        element_birth = np.array(birth_list_element)
+        node_birth = np.array(birth_list_node,dtype=np.float64)
+        asign_birth_node(elements,element_birth,node_birth)
+        
+        
+        n_id_sort = np.argsort(node_birth)
+        n_id_map = np.zeros_like(n_id_sort)
+        nodes = nodes[n_id_sort]
+        node_birth = node_birth[n_id_sort]
+        for i in range(0,n_id_sort.shape[0]):
+            n_id_map[n_id_sort[i]] = i
+        for i in range(0,elements.shape[0]):
+            for j in range(0,8):
+                elements[i,j] = n_id_map[elements[i,j]]
+        e_id_sort = np.argsort(element_birth)
+        elements = elements[e_id_sort]
+        element_mat = element_mat[e_id_sort]
+        element_birth = element_birth[e_id_sort]
+        
+        
+        
+        self.nodes = cp.asarray(nodes)
+        self.nN = self.nodes.shape[0]
+        self.node_birth = node_birth
+        self.elements = elements
+        self.nE = self.elements.shape[0]
+        self.element_birth = element_birth
+#         ind = (self.nodes[self.elements,2]).argsort()
+#         elements_order = [self.elements[i,ind[i]] for i in range(0,ind.shape[0])]
+#         self.elements_order = cp.array(elements_order)
+        self.element_mat = element_mat
+        
+        self.mat_thermal = mat_thermal
+        self.thermal_TD = thermal_TD
+        
     def init_domain(self):
         # reading input files
         start = time.time()
-        nodes, node_birth, elements, element_birth = load_inputfile(self.filename)
+        self.load_file()
         end = time.time()
         print("Time of reading input files: {}".format(end-start))
-        self.nodes = cp.asarray(nodes)
-        self.nN = self.nodes.shape[0]
-        self.node_birth = cp.asarray(node_birth)
-        self.elements = cp.asarray(elements)
-        self.nE = self.elements.shape[0]
-        self.element_birth = cp.asarray(element_birth)
-        ind = (self.nodes[self.elements,2]).argsort()
-        elements_order = [self.elements[i,ind[i]] for i in range(0,ind.shape[0])]
-        self.elements_order = cp.array(elements_order)
-        
-        # assign element materials
-        ##### modifications needed, from input file
-        self.element_mat = cp.ones(self.nE)
-        self.element_mat += self.nodes[self.elements][:,:,2].max(axis=1)<=0 # node maxZ<=0 -> substrate material
-        self.mat_num = 2
-        self.ele_min_Cp_Rho_overCond = [0.368*0.0081/0.0286,0.5*0.008/0.0214]
-        self.density = [0.0081,0.008]
         
         # calculating critical timestep
-        #### modification needed, from input file
         self.defaultFac = 0.75
         start = time.time()
         self.get_timestep()
         end = time.time()
         print("Time of calculating critical timestep: {}".format(end-start))
 
-        
         # reading and interpolating toolpath
         start = time.time()
         toolpath_raw = load_toolpath(filename = self.toolpath_file)
-        endtime = toolpath_raw[-1,0];
-        toolpath = get_toolpath(toolpath_raw,self.dt,endtime)
+        toolpath = get_toolpath(toolpath_raw,self.dt,self.end_time)
         end = time.time()
         print("Time of reading and interpolating toolpath: {}".format(end-start))
         self.toolpath = cp.asarray(toolpath)
 
-        print("Number of nodes: {}".format(len(nodes)))
-        print("Number of elements: {}".format(len(elements)))
-        print("Number of time-steps: {}".format(len(toolpath)))
-        
+        print("Number of nodes: {}".format(len(self.nodes)))
+        print("Number of elements: {}".format(len(self.elements)))
+        print("Number of time-steps: {}".format(len(self.toolpath)))
                 
         # generating surface
         start = time.time()
-        surface, surface_birth,surface_xy,surface_flux = creat_surfaces(elements,element_birth,nodes)
+        self.generate_surf()
         end = time.time()
         print("Time of generating surface: {}".format(end-start))
-        self.surface = cp.asarray(surface)
-        self.surface_birth = cp.asarray(surface_birth)
-        self.surface_xy = cp.asarray(surface_xy)
-        self.surface_flux = cp.asarray(surface_flux)
+        
+    def generate_surf(self):
+        elements = self.elements
+        nodes = self.nodes.get()
+        element_birth = self.element_birth
+        
+        ele_num = elements.shape[0]
+        connElEl = -np.ones([ele_num,100],dtype=np.int64)
+        connVec = elements.flatten()
+        conn_to_el_Vec = np.arange(0,ele_num)[:,np.newaxis].repeat(8,axis=1).flatten()
+        connVecIndx = np.arange(0,ele_num*8)
+        connVecIndx  = connVecIndx[np.argsort(connVec)]
+        connVec = connVec[connVecIndx]
+
+        # find neighbor eles
+        createElElConn(elements,connElEl,connVec,connVecIndx,conn_to_el_Vec)
+
+        # surface connection
+        connect_surf = -np.ones([elements.shape[0],6],dtype=np.int64)
+        createConnSurf(elements,connElEl,connect_surf)
+
+        # creat surface
+        surfaces = np.zeros([elements.shape[0]*6,4],dtype=np.int64)
+        surface_birth = np.zeros([elements.shape[0]*6,2])
+        surface_xy = np.zeros([elements.shape[0]*6,1],dtype=np.int64)
+        surface_flux = np.zeros([elements.shape[0]*6,1],dtype=np.int64)
+
+        surface_num = createSurf(elements,nodes,element_birth,connect_surf,surfaces,surface_birth,surface_xy,surface_flux)
+        self.surface = surfaces[0:surface_num]
+        self.surface_birth = surface_birth[0:surface_num]
+        self.surface_xy = cp.array(surface_xy[0:surface_num])
+        self.surface_flux = cp.array(surface_flux[0:surface_num])
+                
+
 
     def update_birth(self):
         self.active_elements = self.element_birth<self.current_time
@@ -445,23 +574,30 @@ class domain_mgr():
 
         # critical time step
         ele_length = ele_vol/ele_surf_area.max(axis=1)
-        self.dt = 1e10
-        for i in range(self.mat_num):
+        for i in range(len(self.mat_thermal)):
             l = ele_length[self.element_mat==i+1].min()
-            dt = self.ele_min_Cp_Rho_overCond[i]*l**2/2.0 *self.defaultFac
-            self.dt = min(self.dt,dt)
-        self.dt = self.dt.get().item()
+            if self.mat_thermal[i][5] == -1:
+                min_Cp = self.thermal_TD[i+1][0][:,1].min()
+            else:
+                min_Cp = self.mat_thermal[i][5]
+            if self.mat_thermal[i][6] == -1:
+                max_Cond = self.thermal_TD[i+1][1][:,1].min()
+            else:
+                max_Cond = self.mat_thermal[i][6]
+            Rho = self.mat_thermal[i][1]
+            dt = min_Cp*Rho/max_Cond*l**2/2.0 * self.defaultFac
+            self.dt = min(self.dt,dt.item())
 
 class heat_solve_mgr():
     def __init__(self,domain):
         ##### modification needed, from files
         self.domain = domain
-        self.ambient = 300
-        self.r_beam = 1
-        self.q_in = 250
-        self.h_conv = 0.00005
-        self.h_rad = 0.2
-        self.height = 20
+        self.ambient = domain.ambient
+        self.r_beam = domain.r_beam
+        self.q_in = domain.q_in
+        self.h_conv = domain.h_conv
+        self.h_rad = domain.h_rad
+        self.height = -domain.nodes[:,2].min()
         
         # initialization
         self.temperature = self.ambient*cp.ones(self.domain.nodes.shape[0])
@@ -480,25 +616,36 @@ class heat_solve_mgr():
         
         self.density_Cp_Ip *= 0
         self.Cond_Ip *= 0
+        
         ##### temp-dependent, modification needed, from files
-        solidus1 = 1533.15
-        liquidus1 = 1609.15
-        latent1 = 272/(liquidus1-solidus1)
-        mat1 = domain.element_mat == 1
-        thetaIp = temperature_ip[domain.active_elements*mat1]
-        self.density_Cp_Ip[domain.active_elements*mat1] += domain.density[0]*latent1 * (thetaIp>solidus1)*(thetaIp<liquidus1)
-        thetaIp = cp.clip(thetaIp,self.ambient,solidus1)
-        self.density_Cp_Ip[domain.active_elements*mat1] += domain.density[0]*(0.36024 + 2.6e-5*thetaIp - 4e-9*thetaIp**2)
-        self.Cond_Ip[domain.active_elements*mat1] += 5.6e-4 + 2.9e-5 * thetaIp - 7e-9*thetaIp**2;
+        for i in range(0,len(domain.mat_thermal)):
+            matID = domain.mat_thermal[i][0]
+            mat = domain.element_mat == matID
+            thetaIp = temperature_ip[domain.active_elements*mat]
+            
+            solidus = domain.mat_thermal[i][2]
+            liquidus = domain.mat_thermal[i][3]
+            latent = domain.mat_thermal[i][4]/(liquidus-solidus)
+            density = domain.mat_thermal[i][1]
+            
+            self.density_Cp_Ip[domain.active_elements*mat] += density*latent*(thetaIp>solidus)*(thetaIp<liquidus)
+            
+            if domain.mat_thermal[i][5] == -1:
+                temp_Cp = cp.asarray(domain.thermal_TD[matID][0][:,0])
+                Cp = cp.asarray(domain.thermal_TD[matID][0][:,1])            
+                self.density_Cp_Ip[domain.active_elements*mat] += density*cp.interp(thetaIp,temp_Cp,Cp)
+            else:
+                Cp = domain.mat_thermal[i][5]
+                self.density_Cp_Ip[domain.active_elements*mat] += density*Cp
+                
+            
+            if domain.mat_thermal[i][6] == -1:
+                temp_Cond = cp.asarray(domain.thermal_TD[matID][1][:,0])
+                Cond = cp.asarray(domain.thermal_TD[matID][1][:,1])
+                self.Cond_Ip[domain.active_elements*mat] += cp.interp(thetaIp,temp_Cond,Cond)
+            else:
+                self.Cond_Ip[domain.active_elements*mat] += domain.mat_thermal[i][6]
 
-        solidus2 = 1648.15
-        liquidus2 = 1673.15
-        latent2 = 272.5/(liquidus1-solidus2)
-        mat2 = domain.element_mat ==2
-        thetaIp = temperature_ip[domain.active_elements*mat2]
-        self.density_Cp_Ip[domain.active_elements*mat2] += domain.density[1]*latent2*(thetaIp>solidus2)*(thetaIp<liquidus2)
-        self.density_Cp_Ip[domain.active_elements*mat2] += domain.density[1]*0.5000
-        self.Cond_Ip[domain.active_elements*mat2] += 0.0214
 
    
     def update_mvec_stifness(self):
@@ -575,7 +722,7 @@ class heat_solve_mgr():
 
         self.temperature[domain.active_nodes] += domain.dt*self.rhs[domain.active_nodes]/self.m_vec[domain.active_nodes]
         # modification required
-        self.temperature[cp.where(domain.nodes[:,2]==-self.height)]=300
+        self.temperature[cp.where(domain.nodes[:,2]==-self.height)]=self.ambient
         
     
     def calculate_melt(self):
