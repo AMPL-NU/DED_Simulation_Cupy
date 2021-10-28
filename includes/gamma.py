@@ -131,7 +131,7 @@ def createSurf(elements,nodes,element_birth,connect_surf,surfaces,surface_birth,
     ########################################
     height = -nodes[:,2].min()
     for i in range(0,surface_num):
-        if min(nodes[surfaces[i,:]][:,2])>-height:
+        if min(nodes[surfaces[i,:]][:,2])>=-height:
             surface_flux[i] = 1
     
     return surface_num
